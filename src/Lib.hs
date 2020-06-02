@@ -24,17 +24,10 @@ import Data.Time.Clock.POSIX
 import Text.Read (readMaybe)
 import Network.Wai.Middleware.Servant.Errors (errorMw, HasErrorBody(..))
 import Control.Monad.IO.Class (liftIO)
-import Data.Maybe (catMaybes)
+import Control.Applicative ((<|>))
 
-type API
-  = "api" :> "timestamp" :> Get '[JSON] TimeStamp
-  :<|> "api" :> "timestamp" :> Capture "dateString" String :> Get '[JSON] TimeStamp
 
-data TimeStamp
-  = TimeStamp
-    { unix :: String
-    , utc :: String
-    } deriving (Generic, ToJSON)
+-- App Start up
 
 startApp :: IO ()
 startApp = putStrLn "Server running on Port 8080" >>
@@ -47,20 +40,44 @@ app = serve api server
 api :: Proxy API
 api = Proxy
 
+-- Data Types
+
+
+data TimeStamp
+  = TimeStamp
+    { unix :: String
+    , utc :: String
+    } deriving (Generic, ToJSON)
+
+
+-- API
+
+type API
+  = "api" :> "timestamp" :>
+    (                                     Get '[JSON] TimeStamp      
+      :<|> Capture "dateString" String :> Get '[JSON] TimeStamp 
+    )
+
+
+-- Request Handlers --
+
 server :: Server API
 server = sendCurrentDate :<|> parseDate
   where
     parseDate :: String -> Handler TimeStamp
     parseDate s =
-      case catMaybes [parseInputString s, parseInputUnixTime s] of 
-        [utcTime] -> 
-          return (TimeStamp (getPosixTime utcTime) (show utcTime))
-        _ -> 
-          throwError $ err400 { errBody = "Unknown Date" }
+      maybe throw (return . makeTimestamp)
+        (parseInputString s <|> parseInputUnixTime s)
+        where
+          makeTimestamp utcTime = TimeStamp (getPosixTime utcTime) (show utcTime)
+          throw = throwError  $ err400 { errBody = "Unknown Date" }
     sendCurrentDate :: Handler TimeStamp
     sendCurrentDate = do
       currentTime <- liftIO getCurrentTime
       return $ TimeStamp (getPosixTime currentTime) (show currentTime)
+
+
+-- Helpers
 
 getPosixTime :: UTCTime -> String
 getPosixTime = show . round . utcTimeToPOSIXSeconds
@@ -70,5 +87,3 @@ parseInputString = parseTimeM True defaultTimeLocale "%Y-%m-%d"
 
 parseInputUnixTime :: String -> Maybe UTCTime
 parseInputUnixTime = parseTimeM True defaultTimeLocale "%s"
-
-functions = [ parseInputString, parseInputUnixTime ]
